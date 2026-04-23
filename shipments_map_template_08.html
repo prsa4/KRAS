@@ -39,7 +39,7 @@
             margin: 0;
             height: 100vh;
             display: grid;
-            grid-template-columns: 420px 1fr;
+            grid-template-columns: 400px 1fr;
             background:
                 radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 24%),
                 radial-gradient(circle at bottom right, rgba(217, 119, 6, 0.16), transparent 28%),
@@ -54,8 +54,8 @@
             display: grid;
             grid-template-rows: auto auto auto minmax(0, 1fr);
             align-content: start;
-            gap: 14px;
-            padding: 22px;
+            gap: 10px;
+            padding: 16px;
             border-right: 1px solid var(--border);
             background: var(--panel);
             backdrop-filter: blur(10px);
@@ -68,8 +68,8 @@
 
         h1 {
             margin: 0;
-            font-size: 30px;
-            line-height: 1.05;
+            font-size: 24px;
+            line-height: 1;
         }
 
         p {
@@ -80,8 +80,8 @@
 
         .stats {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
         }
 
         .stat,
@@ -93,56 +93,113 @@
         }
 
         .stat {
-            padding: 12px;
-            border-radius: 16px;
+            padding: 8px 10px;
+            border-radius: 14px;
         }
 
         .stat strong {
             display: block;
-            font-size: 21px;
-            margin-bottom: 3px;
+            font-size: 17px;
+            margin-bottom: 2px;
+            line-height: 1;
+        }
+
+        .stat span {
+            display: block;
+            font-size: 11px;
+            line-height: 1.2;
         }
 
         .legend {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 6px;
         }
 
         .chip {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
+            gap: 6px;
+            padding: 6px 10px;
             border-radius: 999px;
             background: #fff;
             border: 1px solid var(--border);
-            font-size: 13px;
+            font-size: 12px;
+            line-height: 1;
         }
 
         .dot {
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
         }
 
         .controls select {
             width: 100%;
             border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 12px 14px;
+            border-radius: 12px;
+            padding: 10px 12px;
             background: #fff;
-            font-size: 14px;
+            font-size: 13px;
         }
 
         .sidebar-main {
             min-height: 0;
             display: grid;
             grid-auto-rows: max-content;
-            gap: 14px;
+            gap: 10px;
             overflow-y: auto;
             overflow-x: hidden;
             padding-right: 4px;
+        }
+
+        .details-drawer {
+            display: grid;
+            gap: 14px;
+            overflow: hidden;
+            max-height: 0;
+            opacity: 0;
+            transform: translateY(-18px);
+            pointer-events: none;
+            transition:
+                max-height 0.38s ease,
+                opacity 0.24s ease,
+                transform 0.38s ease;
+        }
+
+        .details-drawer.open {
+            max-height: 1200px;
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .details-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 0 4px;
+        }
+
+        .details-toolbar strong {
+            font-size: 14px;
+        }
+
+        .close-button {
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 8px 12px;
+            background: #fff;
+            color: var(--ink);
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s ease, transform 0.15s ease;
+        }
+
+        .close-button:hover {
+            background: #f3f4f6;
+            transform: translateY(1px);
         }
 
         .panel {
@@ -196,13 +253,18 @@
 
         .list {
             display: grid;
-            gap: 10px;
+            gap: 8px;
+        }
+
+        .list-item {
+            display: grid;
+            gap: 8px;
         }
 
         .card {
             width: 100%;
-            border-radius: 18px;
-            padding: 14px;
+            border-radius: 16px;
+            padding: 11px 12px;
             text-align: left;
             cursor: pointer;
             transition: transform 0.15s ease, border-color 0.15s ease;
@@ -212,6 +274,48 @@
         .card.active {
             transform: translateY(-1px);
             border-color: rgba(15, 118, 110, 0.4);
+        }
+
+        .details-inline {
+            overflow: hidden;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid rgba(15, 118, 110, 0.18);
+            box-shadow: var(--shadow);
+            transform-origin: top center;
+            animation: details-slide-down 0.24s ease;
+        }
+
+        .details-inline.closing {
+            animation: details-slide-up 0.2s ease forwards;
+        }
+
+        .details-inline-body {
+            display: grid;
+            gap: 12px;
+            padding: 14px;
+        }
+
+        .details-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 14px 14px 0;
+        }
+
+        .close-button {
+            border: 0;
+            border-radius: 999px;
+            padding: 8px 12px;
+            background: #e2e8f0;
+            color: var(--ink);
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .close-button:hover {
+            background: #cbd5e1;
         }
 
         .card-head,
@@ -229,27 +333,27 @@
         }
 
         .badge {
-            padding: 4px 8px;
+            padding: 3px 7px;
             border-radius: 999px;
             color: #fff;
-            font-size: 12px;
+            font-size: 11px;
         }
 
         .status {
             display: inline-flex;
             align-items: center;
-            padding: 4px 9px;
+            padding: 3px 8px;
             border-radius: 999px;
-            font-size: 12px;
+            font-size: 11px;
             color: #fff;
         }
 
         .meta {
             display: grid;
-            gap: 4px;
-            margin-top: 8px;
+            gap: 3px;
+            margin-top: 6px;
             color: var(--muted);
-            font-size: 13px;
+            font-size: 12px;
         }
 
         .timeline {
@@ -269,6 +373,28 @@
         .timeline-entry strong {
             display: block;
             margin-bottom: 4px;
+        }
+
+        @keyframes details-slide-down {
+            from {
+                opacity: 0;
+                transform: translateY(-10px) scaleY(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scaleY(1);
+            }
+        }
+
+        @keyframes details-slide-up {
+            from {
+                opacity: 1;
+                transform: translateY(0) scaleY(1);
+            }
+            to {
+                opacity: 0;
+                transform: translateY(-8px) scaleY(0.96);
+            }
         }
 
         #map {
@@ -306,8 +432,7 @@
 <body>
     <aside>
         <div>
-            <h1>FedEx 0.8</h1>
-            <p>Пошаговая доставка с накоплением риска, событиями и журналом по каждой посылке.</p>
+            <h1>Карта посылок</h1>
         </div>
 
         <div class="stats">
@@ -350,22 +475,6 @@
                     <option value="">Выбери посылку</option>
                 </select>
             </div>
-
-            <section class="panel">
-                <h2>Активная посылка</h2>
-                <div class="row">
-                    <strong id="detail-title">Нет выбора</strong>
-                    <span id="detail-status" class="status" style="background:#64748b">Ожидание</span>
-                </div>
-                <div class="bar"><span id="progress-bar"></span></div>
-                <p id="detail-progress">Прогресс не выбран.</p>
-                <div class="detail-grid" id="detail-grid"></div>
-            </section>
-
-            <section class="panel">
-                <h2>Журнал</h2>
-                <div id="detail-timeline" class="timeline"></div>
-            </section>
 
             <div id="package-list" class="list"></div>
         </div>
@@ -449,12 +558,11 @@
 
         const select = document.getElementById('package-select');
         const list = document.getElementById('package-list');
-        const detailTitle = document.getElementById('detail-title');
-        const detailStatus = document.getElementById('detail-status');
-        const detailProgress = document.getElementById('detail-progress');
-        const detailGrid = document.getElementById('detail-grid');
-        const progressBar = document.getElementById('progress-bar');
-        const detailTimeline = document.getElementById('detail-timeline');
+        let detailsOpen = false;
+
+        function setDetailsOpen(open) {
+            detailsOpen = open;
+        }
 
         function updateStats() {
             document.getElementById('total-count').textContent = payload.stats.total;
@@ -479,7 +587,7 @@
                 }).addTo(markersLayer);
 
                 marker.bindPopup(popupHtml(pkg));
-                marker.on('click', () => selectPackage(String(pkg.id), true));
+                marker.on('click', () => selectPackage(String(pkg.id), true, true, false));
                 markerMap.set(String(pkg.id), marker);
             });
         }
@@ -507,6 +615,76 @@
             `;
         }
 
+        function detailPanelHtml(pkg) {
+            const status = statusMeta(pkg.status);
+            const entries = (pkg.timeline || []).slice().reverse();
+            const timelineHtml = entries.length > 0
+                ? entries.map(entry => `
+                    <div class="timeline-entry">
+                        <strong>${entry.time}</strong>
+                        <span>${entry.message}</span>
+                    </div>
+                `).join('')
+                : '<div class="timeline-entry">Пока без событий.</div>';
+
+            return `
+                <div class="details-toolbar">
+                    <strong>Инфо и журнал</strong>
+                    <button type="button" class="close-button" data-close-details="${pkg.id}">Закрыть</button>
+                </div>
+                <div class="details-inline-body">
+                    <section class="panel">
+                        <h2>Активная посылка</h2>
+                        <div class="row">
+                            <strong id="detail-title">ID ${pkg.id}: ${pkg.origin} -> ${pkg.destination}</strong>
+                            <span class="status" style="background:${status.color}">${status.label}</span>
+                        </div>
+                        <div class="bar"><span style="width:${pkg.progress_pct}%;"></span></div>
+                        <p>Прогресс ${pkg.progress_pct.toFixed(1)}%, шаг ${pkg.current_step}/${pkg.total_steps || 0}, риск ${Math.round(pkg.event_risk * 100)}%.</p>
+                        <div class="detail-grid">
+                            <div>Тип<strong>${pkg.shipment_type}</strong></div>
+                            <div>Целостность<strong>${pkg.integrity_pct}%</strong></div>
+                            <div>Повреждения<strong>${pkg.damage_count}</strong></div>
+                            <div>События<strong>${pkg.events.length}</strong></div>
+                            <div>Прогноз<strong>${formatMaybeNumber(pkg.expected_delivery_hours, ' ч')}</strong></div>
+                            <div>Факт<strong>${formatMaybeNumber(pkg.actual_delivery_hours, ' ч')}</strong></div>
+                            <div>Задержка<strong>${formatMaybeNumber(pkg.delay_hours, ' ч')}</strong></div>
+                            <div>Отклонение<strong>${formatMaybeNumber(pkg.completion_delta_hours, ' ч')}</strong></div>
+                            <div>Стоимость<strong>${formatMaybeNumber(pkg.cost?.toFixed?.(2) ?? pkg.cost)}</strong></div>
+                            <div>Последнее событие<strong>${pkg.last_event || '—'}</strong></div>
+                        </div>
+        
+                    </section>
+                    <section class="panel">
+                        <h2>Журнал</h2>
+                        <div class="timeline">${timelineHtml}</div>
+                    </section>
+                </div>
+            `;
+        }
+
+        function scrollCardIntoView(id) {
+            const card = list.querySelector(`.card[data-id="${id}"]`);
+            if (!card) {
+                return;
+            }
+
+            card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        function animateCloseInlineDetails(id) {
+            const detailsNode = list.querySelector(`.details-inline[data-id="${id}"]`);
+            if (!detailsNode) {
+                renderList();
+                return;
+            }
+
+            detailsNode.classList.add('closing');
+            window.setTimeout(() => {
+                renderList();
+            }, 200);
+        }
+
         function renderList() {
             select.innerHTML = '<option value="">Выбери посылку</option>';
             list.innerHTML = '';
@@ -517,13 +695,33 @@
                 option.textContent = `ID ${pkg.id} - ${pkg.destination} (${statusMeta(pkg.status).label})`;
                 select.appendChild(option);
 
+                const item = document.createElement('div');
+                item.className = 'list-item';
+
                 const card = document.createElement('button');
                 card.type = 'button';
                 card.className = 'card';
                 card.dataset.id = String(pkg.id);
+                card.classList.toggle('active', selectedPackageId === String(pkg.id));
                 card.innerHTML = packageCardHtml(pkg);
-                card.addEventListener('click', () => selectPackage(String(pkg.id), true));
-                list.appendChild(card);
+                card.addEventListener('click', () => selectPackage(String(pkg.id), true, true, false));
+                item.appendChild(card);
+
+                if (detailsOpen && selectedPackageId === String(pkg.id)) {
+                    const details = document.createElement('div');
+                    details.className = 'details-inline';
+                    details.dataset.id = String(pkg.id);
+                    details.innerHTML = detailPanelHtml(pkg);
+                    const closeButton = details.querySelector('[data-close-details]');
+                    closeButton.addEventListener('click', event => {
+                        event.stopPropagation();
+                        detailsOpen = false;
+                        animateCloseInlineDetails(String(pkg.id));
+                    });
+                    item.appendChild(details);
+                }
+
+                list.appendChild(item);
             });
         }
 
@@ -557,50 +755,7 @@
             }
         }
 
-        function renderDetails(pkg) {
-            if (!pkg) {
-                detailTitle.textContent = 'Нет выбора';
-                detailStatus.textContent = 'Ожидание';
-                detailStatus.style.background = '#64748b';
-                detailProgress.textContent = 'Прогресс не выбран.';
-                detailGrid.innerHTML = '';
-                progressBar.style.width = '0%';
-                detailTimeline.innerHTML = '<div class="timeline-entry">Выбери посылку, чтобы увидеть таймлайн.</div>';
-                return;
-            }
-
-            const status = statusMeta(pkg.status);
-            detailTitle.textContent = `ID ${pkg.id}: ${pkg.origin} -> ${pkg.destination}`;
-            detailStatus.textContent = status.label;
-            detailStatus.style.background = status.color;
-            detailProgress.textContent = `Прогресс ${pkg.progress_pct.toFixed(1)}%, шаг ${pkg.current_step}/${pkg.total_steps || 0}, риск ${Math.round(pkg.event_risk * 100)}%.`;
-            progressBar.style.width = `${pkg.progress_pct}%`;
-
-            detailGrid.innerHTML = `
-                <div>Тип<strong>${pkg.shipment_type}</strong></div>
-                <div>Целостность<strong>${pkg.integrity_pct}%</strong></div>
-                <div>Повреждения<strong>${pkg.damage_count}</strong></div>
-                <div>События<strong>${pkg.events.length}</strong></div>
-                <div>Прогноз<strong>${formatMaybeNumber(pkg.expected_delivery_hours, ' ч')}</strong></div>
-                <div>Факт<strong>${formatMaybeNumber(pkg.actual_delivery_hours, ' ч')}</strong></div>
-                <div>Задержка<strong>${formatMaybeNumber(pkg.delay_hours, ' ч')}</strong></div>
-                <div>Отклонение<strong>${formatMaybeNumber(pkg.completion_delta_hours, ' ч')}</strong></div>
-                <div>Стоимость<strong>${formatMaybeNumber(pkg.cost?.toFixed?.(2) ?? pkg.cost)}</strong></div>
-                <div>Последнее событие<strong>${pkg.last_event || '—'}</strong></div>
-            `;
-
-            const entries = (pkg.timeline || []).slice().reverse();
-            detailTimeline.innerHTML = entries.length > 0
-                ? entries.map(entry => `
-                    <div class="timeline-entry">
-                        <strong>${entry.time}</strong>
-                        <span>${entry.message}</span>
-                    </div>
-                `).join('')
-                : '<div class="timeline-entry">Пока без событий.</div>';
-        }
-
-        function selectPackage(id, fitView = false) {
+        function selectPackage(id, fitView = false, openDetails = true, scrollToCard = false) {
             selectedPackageId = id || null;
             select.value = id;
 
@@ -615,12 +770,20 @@
                     activeRoute = null;
                 }
                 routeMarkersLayer.clearLayers();
-                renderDetails(null);
+                setDetailsOpen(false);
+                renderList();
                 return;
             }
 
             drawRoute(pkg, fitView);
-            renderDetails(pkg);
+            setDetailsOpen(openDetails);
+            renderList();
+
+            if (scrollToCard) {
+                window.requestAnimationFrame(() => {
+                    scrollCardIntoView(id);
+                });
+            }
 
             const marker = markerMap.get(id);
             if (marker) {
@@ -649,7 +812,7 @@
         }
 
         select.addEventListener('change', event => {
-            selectPackage(event.target.value, true);
+            selectPackage(event.target.value, true, true, true);
         });
 
         function applyPayload(nextPayload) {
@@ -661,16 +824,11 @@
             renderList();
 
             if (selectedPackageId && packages.some(item => String(item.id) === selectedPackageId)) {
-                selectPackage(selectedPackageId, false);
+                selectPackage(selectedPackageId, false, detailsOpen, false);
                 return;
             }
 
-            if (packages.length > 0) {
-                selectPackage(String(packages[0].id), false);
-                return;
-            }
-
-            selectPackage('', false);
+            selectPackage('', false, false, false);
         }
 
         async function refreshPayload() {
