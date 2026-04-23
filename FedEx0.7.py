@@ -54,11 +54,14 @@ def current_time_text():
 
 def make_config(script_path):
     base_dir = Path(script_path).resolve().parent
+    output_dir = base_dir / Path(script_path).stem
     return {
         "base_dir": base_dir,
-        "map_file": base_dir / "shipments_map.html",
-        "map_data_file": base_dir / "shipments_data.json",
+        "output_dir": output_dir,
+        "map_file": output_dir / "shipments_map.html",
+        "map_data_file": output_dir / "shipments_data.json",
         "map_template_file": base_dir / "shipments_map_template.html",
+        "map_url_path": (output_dir / "shipments_map.html").relative_to(base_dir).as_posix(),
         "map_refresh_seconds": MAP_REFRESH_SECONDS,
         "default_map_center": DEFAULT_MAP_CENTER,
         "osrm_route_url": OSRM_ROUTE_URL,
@@ -583,6 +586,7 @@ def publish_map_state(config, packages, stats, simulation_active):
         simulation_active,
         config["default_map_center"],
     )
+    config["output_dir"].mkdir(parents=True, exist_ok=True)
     config["map_file"].write_text(
         build_map_html(config["map_template_file"], payload),
         encoding="utf-8",
@@ -737,7 +741,7 @@ def run(settings=None):
     route_fetcher = make_route_fetcher(config, runtime["route_state"])
 
     server, server_thread = start_map_server(config["base_dir"])
-    map_url = f"http://127.0.0.1:{server.server_port}/{config['map_file'].name}"
+    map_url = f"http://127.0.0.1:{server.server_port}/{config['map_url_path']}"
 
     packages_copy, stats_copy = snapshot_state(runtime)
     publish_map_state(config, packages_copy, stats_copy, simulation_active=True)

@@ -14,9 +14,12 @@ from faker import Faker
 
 OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving"
 
-MAP_FILE = Path(__file__).with_name("shipments_map.html")
-MAP_DATA_FILE = Path(__file__).with_name("shipments_data.json")
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / Path(__file__).stem
+MAP_FILE = OUTPUT_DIR / "shipments_map.html"
+MAP_DATA_FILE = OUTPUT_DIR / "shipments_data.json"
 MAP_TEMPLATE_FILE = Path(__file__).with_name("shipments_map_template.html")
+MAP_URL_PATH = MAP_FILE.relative_to(BASE_DIR).as_posix()
 MAP_REFRESH_SECONDS = 1.5
 DEFAULT_MAP_CENTER = (54.5260, 15.2551)
 OSRM_MIN_REQUEST_INTERVAL = 0.5
@@ -163,6 +166,7 @@ def retry_until_distinct(generator):
             b, b_coords = generator()
         return a, a_coords, b, b_coords
     return generate_pair
+
 
 def build_fallback_route(lat1, lon1, lat2, lon2):
     delta_lat = lat2 - lat1
@@ -423,35 +427,18 @@ def serialize_packages(packages):
     ))
 
 
+from functools import reduce
+
 def get_map_center(packages):
-    if not packages:
+    all_points = [p["start_coords"] for p in packages] + [p["coords"] for p in packages]
+    all_points = [(lat, lon) for lat, lon in all_points if lat is not None]
+    
+    if not all_points:
         return {"lat": DEFAULT_MAP_CENTER[0], "lon": DEFAULT_MAP_CENTER[1]}
-
-    lat_sum = 0
-    lon_sum = 0
-    points_count = 0
-
-    for package in packages:
-        start_lat, start_lon = package["start_coords"]
-        end_lat, end_lon = package["coords"]
-
-        if start_lat is not None and start_lon is not None:
-            lat_sum += start_lat
-            lon_sum += start_lon
-            points_count += 1
-
-        if end_lat is not None and end_lon is not None:
-            lat_sum += end_lat
-            lon_sum += end_lon
-            points_count += 1
-
-    if points_count == 0:
-        return {"lat": DEFAULT_MAP_CENTER[0], "lon": DEFAULT_MAP_CENTER[1]}
-
-    return {
-        "lat": lat_sum / points_count,
-        "lon": lon_sum / points_count,
-    }
+    
+    total = reduce(lambda acc, p: (acc[0] + p[0], acc[1] + p[1]), all_points, (0, 0))
+    n = len(all_points)
+    return {"lat": total[0] / n, "lon": total[1] / n}
 
 
 def build_map_payload(packages, stats, simulation_active):
@@ -484,6 +471,7 @@ def get_state(packages, packages_lock, stats, stats_lock):
 
 def publish_map_state(packages, stats, simulation_active):
     payload = build_map_payload(packages, stats, simulation_active)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     MAP_FILE.write_text(build_map_html(payload), encoding="utf-8")
     MAP_DATA_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
@@ -501,7 +489,7 @@ def map_publisher(stop_event, packages, packages_lock, stats, stats_lock):
 
 
 def start_map_server():
-    handler = functools.partial(QuietHTTPRequestHandler, directory=str(Path(__file__).parent))
+    handler = functools.partial(QuietHTTPRequestHandler, directory=str(BASE_DIR))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -532,7 +520,7 @@ def run():
     packages_lock = threading.Lock()
 
     server, server_thread = start_map_server()
-    map_url = f"http://127.0.0.1:{server.server_port}/{MAP_FILE.name}"
+    map_url = f"http://127.0.0.1:{server.server_port}/{MAP_URL_PATH}"
 
     initial_packages, initial_stats = get_state(packages, packages_lock, stats, stats_lock)
     publish_map_state(initial_packages, initial_stats, simulation_active=True)
