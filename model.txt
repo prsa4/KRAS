@@ -1,0 +1,883 @@
+# model.py
+import json
+import os
+import random
+import re
+import threading
+from collections import deque
+from pathlib import Path
+
+from llama_cpp import Llama
+
+# ========================= НАСТРОЙКИ =========================
+MODEL_NAME = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+
+MODEL_PATH = str(
+    Path(__file__).resolve().parent / "models" / MODEL_NAME
+)
+
+# Параметры для ноутбука без GPU
+N_THREADS = 4                    # ← Измени под свой процессор (3-6)
+N_BATCH = 512
+N_CTX = 2048
+
+MODEL_BATCH_SIZE = 10
+INITIAL_CARGO_BUFFER_SIZE = 15
+BUFFER_LOW_WATERMARK = 6
+PREFETCH_IDLE_SECONDS = 0.07
+
+MODEL_GENERATION_ATTEMPTS = 2
+MODEL_MAX_TOKENS = 280
+
+RECENT_CARGO_WINDOW = 50
+STARTUP_READY_BUFFER_SIZE = 5
+MAX_BLOCKING_FILL_ROUNDS = 2
+
+FORBIDDEN_CARGO_TERMS = {
+    "завод", "фабрика", "предприятие", "склад", "цех", "комбинат", "буровая",
+    "электростанция", "станция", "депо", "терминал", "хаб", "warehouse",
+    "factory", "plant", "facility", "building", "infrastructure", "terminal",
+    "hub", "depot", "компания", "магазин", "сервис", "супермаркет", "дистрибьютор",
+    "company", "store", "service", "market", "distributor",
+}
+
+ALLOWED_UNITS = {"шт.", "шт", "кор.", "кор", "пал.", "пал"}
+
+# ====================== БЛОКИРОВКИ ======================
+_MODEL_LOCK = threading.Lock()
+_BUFFER_LOCK = threading.Lock()
+_FILL_LOCK = threading.Lock()
+_RECENT_LOCK = threading.Lock()
+
+_MODEL_STATE = {"llm": None, "load_error": None}
+_CARGO_BUFFER: list = []
+_RECENT_CARGO_SIGNATURES = deque(maxlen=RECENT_CARGO_WINDOW)
+
+
+def _load_generator_model():
+    if _MODEL_STATE["llm"] is not None:
+        return _MODEL_STATE["llm"]
+
+    with _MODEL_LOCK:
+        if _MODEL_STATE["llm"] is not None:
+            return _MODEL_STATE["llm"]
+
+        try:
+            if not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError(f"Модель не найдена: {MODEL_PATH}")
+
+            llm = Llama(
+                model_path=MODEL_PATH,
+                n_ctx=N_CTX,
+                n_threads=N_THREADS,
+                n_threads_batch=N_THREADS,
+                n_batch=N_BATCH,
+                n_gpu_layers=0,
+                chat_format="llama-3",
+                verbose=False,
+                use_mmap=True,
+            )
+            print(f"✅ Llama-3.2-1B загружена | threads={N_THREADS}")
+        except Exception as e:
+            _MODEL_STATE["load_error"] = e
+            print(f"❌ Ошибка загрузки модели: {e}")
+            raise
+
+        _MODEL_STATE["llm"] = llm
+        return llm
+
+
+def _get_recent_cargo_examples(limit=6):
+    with _RECENT_LOCK:
+        return [f"{b} | {n} | {m}" for b, n, m in list(_RECENT_CARGO_SIGNATURES)[-limit:]]
+
+
+def _build_cargo_prompt(batch_size: int) -> str:
+    prompt = f"""Сгенерируй ровно {batch_size} разных реалистичных товаров для международной доставки.
+
+Используй правдоподобные бренды и модели. Все названия на русском языке.
+
+Верни ТОЛЬКО чистый JSON-массив объектов с полями:
+- brand
+- name
+- model
+- unit ("шт.", "кор." или "пал.")
+- quantity (1-20)
+- estimated_weight_kg (0.1-80.0)
+
+Не пиши ничего кроме JSON."""
+    
+    recent = _get_recent_cargo_examples()
+    if recent:
+        prompt += "\n\nИзбегай этих товаров: " + "; ".join(recent)
+    
+    return prompt
+
+
+def _generate_model_text(prompt: str) -> str:
+    llm = _load_generator_model()
+    response = llm.create_chat_completion(
+        messages=[
+            {"role": "system", "content": "Отвечай только чистым JSON-массивом. Без объяснений."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.68,
+        max_tokens=MODEL_MAX_TOKENS,
+        top_p=0.9,
+        repeat_penalty=1.1,
+    )
+    return response["choices"][0]["message"]["content"].strip()
+
+
+def _extract_json_payload(text: str):
+    match = re.search(r"\[[\s\S]*?\]", text)
+    if not match:
+        raise ValueError("JSON не найден")
+    return json.loads(match.group(0))
+
+
+# ==================== Нормализация ====================
+def _normalize_brand(v):    return re.sub(r"\s+", " ", str(v or "Unknown")).strip()[:45]
+def _normalize_text(v, d):  return re.sub(r"\s+", " ", str(v or d)).strip()[:110]
+def _normalize_model_name(v, d): return re.sub(r"\s+", " ", str(v or d)).strip()[:65]
+
+def _normalize_unit(v):
+    u = str(v or "").strip().lower()
+    if u.startswith(("шт", "piece", "pcs")): return "шт."
+    if u.startswith(("кор", "box")): return "кор."
+    if u.startswith(("пал", "pallet")): return "пал."
+    return "кор."
+
+def _to_positive_int(v, d):
+    try: return max(1, min(20, int(v)))
+    except: return d
+
+def _to_positive_float(v, d):
+    try: return round(max(0.1, min(80.0, float(v))), 2)
+    except: return d
+
+def _build_cargo_summary(c):
+    return f"{c['brand']} {c['name']} {c['model']} | {c['quantity']} {c['unit']}"
+
+def _cargo_signature(c):
+    return (c.get("brand","").strip().lower(), 
+            c.get("name","").strip().lower(), 
+            c.get("model","").strip().lower())
+
+def _contains_forbidden_cargo_terms(*parts):
+    text = " ".join(str(p or "").lower() for p in parts)
+    return any(term in text for term in FORBIDDEN_CARGO_TERMS)
+
+def _is_valid_cargo_payload(p):
+    if not isinstance(p, dict): return False
+    if not all(p.get(k) for k in ["brand", "name", "model"]): return False
+    if _contains_forbidden_cargo_terms(p.get("brand"), p.get("name"), p.get("model")): return False
+    return True
+
+
+def _normalize_cargo_payload(payload, rng=None):
+    rng = rng or random
+    cargo = {
+        "brand": _normalize_brand(payload.get("brand")),
+        "name": _normalize_text(payload.get("name"), "Товар"),
+        "model": _normalize_model_name(payload.get("model"), "Series"),
+        "unit": _normalize_unit(payload.get("unit")),
+        "quantity": _to_positive_int(payload.get("quantity"), rng.randint(1, 15)),
+        "estimated_weight_kg": _to_positive_float(payload.get("estimated_weight_kg"), 
+                                                  round(rng.uniform(0.5, 24.0), 2)),
+    }
+    cargo["summary"] = _build_cargo_summary(cargo)
+    return cargo
+
+
+def _fallback_cargo(rng=None):
+    rng = rng or random
+    brands = ["Bosch", "Samsung", "Xiaomi", "Philips", "Makita", "Sony", "JBL", "Redmond"]
+    names = ["Беспроводные наушники", "Аккумуляторная дрель", "Смарт-часы", "Портативная колонка", 
+             "Электрическая зубная щётка", "Фитнес-браслет", "Кофемашина", "Угловая шлифмашина"]
+    
+    return {
+        "brand": random.choice(brands),
+        "name": random.choice(names),
+        "model": f"Model-{rng.randint(100,999)}",
+        "unit": "шт.",
+        "quantity": rng.randint(1, 12),
+        "estimated_weight_kg": round(rng.uniform(0.4, 18.0), 2),
+        "summary": ""
+    }
+
+
+def _remember_cargo_signature(sig):
+    with _RECENT_LOCK:
+        if sig not in _RECENT_CARGO_SIGNATURES:
+            _RECENT_CARGO_SIGNATURES.append(sig)
+
+
+def _is_distinct_cargo(candidate, seen):
+    sig = _cargo_signature(candidate)
+    if sig in seen or sig in _RECENT_CARGO_SIGNATURES:
+        return False
+    seen.add(sig)
+    return True
+
+
+def _generate_cargo_batch_from_model(batch_size: int, rng=None):
+    rng = rng or random
+    cargos = []
+    seen = set()
+
+    for _ in range(MODEL_GENERATION_ATTEMPTS):
+        try:
+            missing = max(6, batch_size - len(cargos))
+            raw = _generate_model_text(_build_cargo_prompt(missing))
+            payload = _extract_json_payload(raw)
+
+            if isinstance(payload, dict):
+                payload = [payload]
+
+            for item in payload:
+                if not _is_valid_cargo_payload(item):
+                    continue
+                norm = _normalize_cargo_payload(item, rng)
+                if not _is_distinct_cargo(norm, seen):
+                    continue
+                _remember_cargo_signature(_cargo_signature(norm))
+                cargos.append(norm)
+                if len(cargos) >= batch_size:
+                    return cargos[:batch_size]
+        except Exception:
+            continue
+
+    while len(cargos) < batch_size:
+        cargos.append(_fallback_cargo(rng))
+    return cargos[:batch_size]
+
+
+def _fill_cargo_buffer(rng=None):
+    rng = rng or random
+    with _FILL_LOCK:
+        try:
+            new_cargos = _generate_cargo_batch_from_model(MODEL_BATCH_SIZE, rng)
+        except Exception:
+            new_cargos = [_fallback_cargo(rng) for _ in range(MODEL_BATCH_SIZE)]
+
+        with _BUFFER_LOCK:
+            _CARGO_BUFFER.extend(new_cargos)
+        return len(new_cargos)
+
+
+def get_cargo_buffer_size():
+    with _BUFFER_LOCK:
+        return len(_CARGO_BUFFER)
+
+
+def prefill_cargo_buffer(target_size=INITIAL_CARGO_BUFFER_SIZE, rng=None, max_rounds=None):
+    rng = rng or random
+    rounds = 0
+    while get_cargo_buffer_size() < target_size:
+        if max_rounds and rounds >= max_rounds:
+            break
+        _fill_cargo_buffer(rng)
+        rounds += 1
+    return get_cargo_buffer_size()
+
+
+def generate_random_cargo(rng=None):
+    rng = rng or random
+    with _BUFFER_LOCK:
+        if _CARGO_BUFFER:
+            return _CARGO_BUFFER.pop(0)
+
+    prefill_cargo_buffer(STARTUP_READY_BUFFER_SIZE, rng, MAX_BLOCKING_FILL_ROUNDS)
+
+    with _BUFFER_LOCK:
+        if _CARGO_BUFFER:
+            return _CARGO_BUFFER.pop(0)
+
+    return _fallback_cargo(rng)
+
+
+def generate_cargo_batch(size: int, rng=None):
+    return [generate_random_cargo(rng) for _ in range(size)]
+
+
+def preview_cargo_batch(size=6):
+    return generate_cargo_batch(size)
+
+
+# ====================== ПРЕФЕТЧИНГ (для совместимости) ======================
+
+def cargo_prefetch_loop(
+    stop_event: threading.Event,
+    target_size=INITIAL_CARGO_BUFFER_SIZE,
+    low_watermark=BUFFER_LOW_WATERMARK,
+    idle_seconds=PREFETCH_IDLE_SECONDS,
+    rng=None
+):
+    """
+    Фоновая функция для автоматического заполнения буфера.
+    Запускается в отдельном потоке.
+    """
+    rng = rng or random
+
+    while not stop_event.is_set():
+        if get_cargo_buffer_size() <= low_watermark:
+            try:
+                prefill_cargo_buffer(target_size, rng)
+            except Exception as e:
+                print(f"[Prefetch] Ошибка заполнения буфера: {e}")
+        
+        stop_event.wait(idle_seconds)
+
+
+
+def init_cargo_buffer():
+    """Инициализирует буфер при запуске приложения"""
+    print(f"Инициализация буфера товаров... (цель: {INITIAL_CARGO_BUFFER_SIZE} шт.)")
+    size = prefill_cargo_buffer(INITIAL_CARGO_BUFFER_SIZE)
+    print(f"Буфер готов. Товаров в буфере: {size}")
+    return size
+
+
+============================================================
+GPU VARIANT OF model.py
+
+============================================================
+
+import json
+import os
+import random
+import re
+import threading
+from collections import deque
+from pathlib import Path
+
+from llama_cpp import Llama
+
+
+MODEL_PATH = str(
+    Path(__file__).resolve().parent / "models" / "Gemma3-UNCENSORED-1B.Q4_K_M.gguf"
+)
+MODEL_DEVICE = "gpu"
+
+
+def _read_int_env(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+MODEL_N_CTX = _read_int_env("CARGO_MODEL_N_CTX", 2048)
+MODEL_N_THREADS = _read_int_env("CARGO_MODEL_N_THREADS", 0)
+MODEL_GPU_LAYERS = _read_int_env("CARGO_MODEL_GPU_LAYERS", -1)
+
+MODEL_BATCH_SIZE = 4
+INITIAL_CARGO_BUFFER_SIZE = 12
+BUFFER_LOW_WATERMARK = 8
+PREFETCH_IDLE_SECONDS = 0.12
+MODEL_GENERATION_ATTEMPTS = 3
+MODEL_MAX_TOKENS = 384
+RECENT_CARGO_HISTORY_SIZE = 256
+STARTUP_READY_BUFFER_SIZE = 1
+MAX_BLOCKING_FILL_ROUNDS = 1
+
+FORBIDDEN_CARGO_TERMS = {
+    "завод",
+    "фабрика",
+    "предприятие",
+    "склад",
+    "цех",
+    "комбинат",
+    "буровая",
+    "электростанция",
+    "станция",
+    "депо",
+    "терминал",
+    "хаб",
+    "warehouse",
+    "factory",
+    "plant",
+    "facility",
+    "building",
+    "infrastructure",
+    "terminal",
+    "hub",
+    "depot",
+    "компания",
+    "магазин",
+    "сервис",
+    "супермаркет",
+    "бренд",
+    "дистрибьютор",
+    "company",
+    "store",
+    "service",
+    "market",
+    "distributor",
+}
+
+ALLOWED_UNITS = {
+    "шт.",
+    "шт",
+    "кор.",
+    "кор",
+    "пал.",
+    "пал",
+    "unit",
+    "units",
+    "piece",
+    "pieces",
+    "pcs",
+    "pc",
+    "box",
+    "boxes",
+    "carton",
+    "cartons",
+    "pallet",
+    "pallets",
+}
+
+_MODEL_LOCK = threading.Lock()
+_BUFFER_LOCK = threading.Lock()
+_FILL_LOCK = threading.Lock()
+_HISTORY_LOCK = threading.Lock()
+
+_MODEL_STATE = {
+    "llm": None,
+    "load_error": None,
+}
+
+_CARGO_BUFFER = []
+_RECENT_CARGO_SIGNATURES = deque()
+_RECENT_CARGO_SIGNATURE_SET = set()
+
+
+def get_model_runtime_config():
+    return {
+        "model_path": MODEL_PATH,
+        "device": MODEL_DEVICE,
+        "n_ctx": MODEL_N_CTX,
+        "n_threads": MODEL_N_THREADS,
+        "n_gpu_layers": MODEL_GPU_LAYERS,
+        "chat_format": "gemma",
+    }
+
+
+def _build_llama_options():
+    runtime = get_model_runtime_config()
+    return {
+        "model_path": runtime["model_path"],
+        "n_ctx": runtime["n_ctx"],
+        "n_threads": runtime["n_threads"],
+        "n_gpu_layers": runtime["n_gpu_layers"],
+        "verbose": False,
+        "chat_format": runtime["chat_format"],
+    }
+
+
+def _load_generator_model():
+    if _MODEL_STATE["llm"] is not None:
+        return _MODEL_STATE["llm"]
+
+    with _MODEL_LOCK:
+        if _MODEL_STATE["llm"] is not None:
+            return _MODEL_STATE["llm"]
+
+        if _MODEL_STATE["load_error"] is not None:
+            raise RuntimeError("Cargo model is unavailable") from _MODEL_STATE["load_error"]
+
+        try:
+            if not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError(f"Gemma model not found: {MODEL_PATH}")
+
+            llm = Llama(**_build_llama_options())
+        except Exception as exc:
+            _MODEL_STATE["load_error"] = exc
+            raise RuntimeError("Cargo model failed to load") from exc
+
+        _MODEL_STATE["llm"] = llm
+        return llm
+
+
+def _build_cargo_prompt(batch_size):
+    return (
+        f"Верни JSON-массив ровно из {batch_size} разных товаров для международной доставки. "
+        "Каждый объект должен быть именно товаром, устройством, аксессуаром, инструментом или партией продукции. "
+        "Сделай товары максимально разными по типу и брендам, не повторяй один и тот же товар разными вариантами. "
+        "Желательно смешивать категории: электроника, одежда, бытовые товары, инструменты, спорттовары, косметика, игрушки, автоаксессуары, офисные товары. "
+        "Нельзя генерировать заводы, компании, магазины, склады, сервисы, здания и инфраструктуру. "
+        "Все строки на русском языке. "
+        "Поля строго такие: brand, name, model, unit, quantity, estimated_weight_kg. "
+        "unit только из списка: шт., кор., пал. "
+        "quantity от 1 до 20. estimated_weight_kg от 0.1 до 80.0. "
+        "Верни только JSON-массив без пояснений."
+    )
+
+
+def _generate_model_text(prompt):
+    llm = _load_generator_model()
+
+    response = llm.create_chat_completion(
+        messages=[
+            {
+                "role": "system",
+                "content": "Ты генератор тестовых данных для логистической системы. "
+                           "Всегда отвечай только чистым JSON-массивом. "
+                           "Не пиши объяснения, не используй markdown. "
+                           "Генерируй только отдельные товары и партии товаров, а не компании, здания или инфраструктуру. "
+                           "Старайся давать разнообразные бренды, модели и типы товаров без повторов."
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.72,
+        max_tokens=MODEL_MAX_TOKENS,
+        top_p=0.95,
+        repeat_penalty=1.14,
+    )
+    return response["choices"][0]["message"]["content"].strip()
+
+
+def _extract_json_payload(text):
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+
+    if not match:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+
+    if not match:
+        raise ValueError("Model response does not contain JSON")
+
+    return json.loads(match.group(0))
+
+
+def _to_positive_int(value, default):
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        result = default
+
+    return max(1, min(20, result))
+
+
+def _to_positive_float(value, default):
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        result = default
+
+    return round(max(0.1, min(80.0, result)), 2)
+
+
+def _normalize_text(value, default):
+    text = str(value or "").strip()
+    return text or default
+
+
+def _normalize_brand(value):
+    brand = _normalize_text(value, "Generated")
+    brand = re.sub(r"\s+", " ", brand)
+    return brand[:40]
+
+
+def _normalize_unit(value):
+    unit = _normalize_text(value, "кор.").lower()
+
+    if unit in {"unit", "units", "piece", "pieces", "pcs", "pc", "шт", "шт."}:
+        return "шт."
+
+    if unit in {"box", "boxes", "carton", "cartons", "кор", "кор."}:
+        return "кор."
+
+    if unit in {"pallet", "pallets", "пал", "пал."}:
+        return "пал."
+
+    return "кор."
+
+
+def _normalize_model_name(value, default):
+    model_name = _normalize_text(value, default)
+    model_name = re.sub(r"\s+", " ", model_name)
+    return model_name[:60]
+
+
+def _build_cargo_summary(cargo):
+    return (
+        f"{cargo['brand']} {cargo['name']} {cargo['model']} | "
+        f"{cargo['quantity']} {cargo['unit']}"
+    )
+
+
+def _contains_forbidden_cargo_terms(*parts):
+    haystack = " ".join(str(part or "").lower() for part in parts)
+    return any(term in haystack for term in FORBIDDEN_CARGO_TERMS)
+
+
+def _looks_like_business_entity(*parts):
+    haystack = " ".join(str(part or "").lower() for part in parts)
+    patterns = [
+        r"\bооо\b",
+        r"\bзао\b",
+        r"\bоао\b",
+        r"\bип\b",
+        r"\bltd\b",
+        r"\binc\b",
+        r"\bcorp\b",
+        r"\bllc\b",
+    ]
+    return any(re.search(pattern, haystack) for pattern in patterns)
+
+
+def _cargo_signature(candidate):
+    return (
+        candidate.get("brand", "").strip().lower(),
+        candidate.get("name", "").strip().lower(),
+        candidate.get("model", "").strip().lower(),
+    )
+
+
+def _get_blocked_cargo_signatures():
+    with _BUFFER_LOCK:
+        buffer_signatures = {_cargo_signature(item) for item in _CARGO_BUFFER}
+
+    with _HISTORY_LOCK:
+        recent_signatures = set(_RECENT_CARGO_SIGNATURE_SET)
+
+    return buffer_signatures | recent_signatures
+
+
+def _remember_cargo_signatures(cargos):
+    with _HISTORY_LOCK:
+        for cargo in cargos:
+            signature = _cargo_signature(cargo)
+
+            if signature in _RECENT_CARGO_SIGNATURE_SET:
+                continue
+
+            _RECENT_CARGO_SIGNATURES.append(signature)
+            _RECENT_CARGO_SIGNATURE_SET.add(signature)
+
+            while len(_RECENT_CARGO_SIGNATURES) > RECENT_CARGO_HISTORY_SIZE:
+                expired = _RECENT_CARGO_SIGNATURES.popleft()
+                _RECENT_CARGO_SIGNATURE_SET.discard(expired)
+
+
+def _is_distinct_cargo(candidate, seen_signatures, blocked_signatures=None):
+    signature = _cargo_signature(candidate)
+
+    if blocked_signatures is not None and signature in blocked_signatures:
+        return False
+
+    if signature in seen_signatures:
+        return False
+
+    seen_signatures.add(signature)
+    return True
+
+
+def _normalize_cargo_payload(payload, rng=None):
+    rng = rng or random
+
+    quantity = _to_positive_int(
+        payload.get("quantity"),
+        rng.randint(1, 18),
+    )
+
+    estimated_weight_kg = _to_positive_float(
+        payload.get("estimated_weight_kg"),
+        quantity * rng.uniform(0.4, 2.8),
+    )
+
+    cargo = {
+        "brand": _normalize_brand(payload.get("brand")),
+        "name": _normalize_text(payload.get("name"), "Случайный товар"),
+        "model": _normalize_model_name(payload.get("model"), "Series X"),
+        "unit": _normalize_unit(payload.get("unit")),
+        "quantity": quantity,
+        "estimated_weight_kg": estimated_weight_kg,
+    }
+
+    cargo["summary"] = _build_cargo_summary(cargo)
+    return cargo
+
+
+def _fallback_cargo(rng=None):
+    rng = rng or random
+
+    cargo = {
+        "brand": f"Generated-{rng.randint(100, 999)}",
+        "name": f"Товар {rng.randint(1000, 9999)}",
+        "model": f"Series-{rng.randint(10, 99)}",
+        "unit": "кор.",
+        "quantity": rng.randint(1, 20),
+        "estimated_weight_kg": round(rng.uniform(1.0, 30.0), 2),
+    }
+
+    cargo["summary"] = _build_cargo_summary(cargo)
+    return cargo
+
+
+def _is_valid_cargo_payload(payload):
+    if not isinstance(payload, dict):
+        return False
+
+    brand = payload.get("brand")
+    name = payload.get("name")
+    model_name = payload.get("model")
+    unit = str(payload.get("unit") or "").strip().lower()
+
+    if not brand or not name or not model_name:
+        return False
+
+    if _contains_forbidden_cargo_terms(brand, name, model_name):
+        return False
+
+    if _looks_like_business_entity(brand, name, model_name):
+        return False
+
+    if unit not in ALLOWED_UNITS:
+        return False
+
+    if len(str(name).strip()) < 3 or len(str(model_name).strip()) < 2:
+        return False
+
+    return True
+
+
+def _generate_cargo_batch_from_model(batch_size, rng=None):
+    rng = rng or random
+    last_error = None
+    cargos = []
+    seen_signatures = set()
+    blocked_signatures = _get_blocked_cargo_signatures()
+
+    for _ in range(MODEL_GENERATION_ATTEMPTS):
+        try:
+            missing = max(1, batch_size - len(cargos))
+            raw_text = _generate_model_text(_build_cargo_prompt(missing))
+            payload = _extract_json_payload(raw_text)
+
+            if isinstance(payload, dict):
+                payload = [payload]
+
+            if not isinstance(payload, list) or not payload:
+                continue
+
+            for item in payload:
+                if not _is_valid_cargo_payload(item):
+                    continue
+
+                normalized = _normalize_cargo_payload(item, rng)
+
+                if not _is_distinct_cargo(normalized, seen_signatures, blocked_signatures):
+                    continue
+
+                cargos.append(normalized)
+
+                if len(cargos) >= batch_size:
+                    break
+
+            if len(cargos) >= batch_size:
+                return cargos
+
+        except Exception as exc:
+            last_error = exc
+
+    if cargos:
+        return cargos
+
+    raise ValueError("Model cargo list does not contain valid product objects") from last_error
+
+
+def _fill_cargo_buffer(rng=None):
+    rng = rng or random
+
+    with _FILL_LOCK:
+        try:
+            cargos = _generate_cargo_batch_from_model(MODEL_BATCH_SIZE, rng)
+        except Exception:
+            if _MODEL_STATE["load_error"] is not None:
+                cargos = [_fallback_cargo(rng) for _ in range(MODEL_BATCH_SIZE)]
+            else:
+                cargos = []
+
+        if cargos:
+            _remember_cargo_signatures(cargos)
+            with _BUFFER_LOCK:
+                _CARGO_BUFFER.extend(cargos)
+
+        return len(cargos)
+
+
+def get_cargo_buffer_size():
+    with _BUFFER_LOCK:
+        return len(_CARGO_BUFFER)
+
+
+def prefill_cargo_buffer(target_size=INITIAL_CARGO_BUFFER_SIZE, rng=None, max_rounds=None):
+    rng = rng or random
+    stalled_attempts = 0
+    rounds = 0
+
+    while get_cargo_buffer_size() < target_size:
+        if max_rounds is not None and rounds >= max_rounds:
+            break
+
+        added = _fill_cargo_buffer(rng)
+        rounds += 1
+
+        if added > 0:
+            stalled_attempts = 0
+            continue
+
+        stalled_attempts += 1
+
+        if stalled_attempts >= MODEL_GENERATION_ATTEMPTS:
+            break
+
+    return get_cargo_buffer_size()
+
+
+def cargo_prefetch_loop(
+    stop_event,
+    target_size=INITIAL_CARGO_BUFFER_SIZE,
+    low_watermark=BUFFER_LOW_WATERMARK,
+    idle_seconds=PREFETCH_IDLE_SECONDS,
+    rng=None,
+):
+    rng = rng or random
+
+    while not stop_event.is_set():
+        if get_cargo_buffer_size() <= low_watermark:
+            prefill_cargo_buffer(target_size, rng)
+
+        stop_event.wait(idle_seconds)
+
+
+def generate_random_cargo(rng=None):
+    rng = rng or random
+
+    with _BUFFER_LOCK:
+        if _CARGO_BUFFER:
+            return _CARGO_BUFFER.pop(0)
+
+    prefill_cargo_buffer(STARTUP_READY_BUFFER_SIZE, rng, max_rounds=MAX_BLOCKING_FILL_ROUNDS)
+
+    with _BUFFER_LOCK:
+        if _CARGO_BUFFER:
+            return _CARGO_BUFFER.pop(0)
+
+    return _fallback_cargo(rng)
+
+
+def generate_cargo_batch(size, rng=None):
+    rng = rng or random
+    return [generate_random_cargo(rng) for _ in range(size)]
+
+
+def preview_cargo_batch(size=3):
+    return generate_cargo_batch(size)
+
+
+if __name__ == "__main__":
+    for cargo in preview_cargo_batch():
+        print(json.dumps(cargo, ensure_ascii=False, indent=2))

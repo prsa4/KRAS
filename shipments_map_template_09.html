@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shipment Map 0.9</title>
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""
+    >
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #e7efe9;
+            --panel: rgba(250, 252, 249, 0.94);
+            --ink: #1f2937;
+            --muted: #5b6472;
+            --accent: #0f766e;
+            --normal: #2563eb;
+            --urgent: #d97706;
+            --danger: #dc2626;
+            --ok: #15803d;
+            --warn: #b45309;
+            --border: rgba(31, 41, 55, 0.12);
+            --shadow: 0 18px 34px rgba(31, 41, 55, 0.10);
+        }
+
+        * { box-sizing: border-box; }
+
+        html,
+        body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            margin: 0;
+            height: 100vh;
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            background:
+                radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 24%),
+                radial-gradient(circle at bottom right, rgba(217, 119, 6, 0.16), transparent 28%),
+                linear-gradient(135deg, #eef4ef 0%, #dde9df 100%);
+            color: var(--ink);
+            font-family: "Segoe UI", sans-serif;
+        }
+
+        aside {
+            height: 100vh;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto auto auto minmax(0, 1fr);
+            align-content: start;
+            gap: 10px;
+            padding: 16px;
+            border-right: 1px solid var(--border);
+            background: var(--panel);
+            backdrop-filter: blur(10px);
+            overflow: hidden;
+        }
+
+        aside > * {
+            min-height: 0;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .stat,
+        .panel,
+        .card {
+            background: #fff;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .stat {
+            padding: 8px 10px;
+            border-radius: 14px;
+        }
+
+        .stat strong {
+            display: block;
+            font-size: 17px;
+            margin-bottom: 2px;
+            line-height: 1;
+        }
+
+        .stat span {
+            display: block;
+            font-size: 11px;
+            line-height: 1.2;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #fff;
+            border: 1px solid var(--border);
+            font-size: 12px;
+            line-height: 1;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .controls select {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 12px;
+            background: #fff;
+            font-size: 13px;
+        }
+
+        .sidebar-main {
+            min-height: 0;
+            display: grid;
+            grid-auto-rows: max-content;
+            gap: 10px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 4px;
+        }
+
+        .details-drawer {
+            display: grid;
+            gap: 14px;
+            overflow: hidden;
+            max-height: 0;
+            opacity: 0;
+            transform: translateY(-18px);
+            pointer-events: none;
+            transition:
+                max-height 0.38s ease,
+                opacity 0.24s ease,
+                transform 0.38s ease;
+        }
+
+        .details-drawer.open {
+            max-height: 1200px;
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .details-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 0 4px;
+        }
+
+        .details-toolbar strong {
+            font-size: 14px;
+        }
+
+        .close-button {
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 8px 12px;
+            background: #fff;
+            color: var(--ink);
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s ease, transform 0.15s ease;
+        }
+
+        .close-button:hover {
+            background: #f3f4f6;
+            transform: translateY(1px);
+        }
+
+        .panel {
+            border-radius: 20px;
+            padding: 14px;
+        }
+
+        .panel h2 {
+            margin: 0 0 10px;
+            font-size: 16px;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .detail-grid strong {
+            display: block;
+            color: var(--ink);
+            font-size: 15px;
+            margin-top: 2px;
+        }
+
+        .bar {
+            position: relative;
+            width: 100%;
+            height: 10px;
+            border-radius: 999px;
+            background: #e5e7eb;
+            overflow: hidden;
+            margin: 8px 0 6px;
+        }
+
+        .bar > span {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 0;
+            background: linear-gradient(90deg, var(--accent), #22c55e);
+            border-radius: inherit;
+        }
+
+        .timeline {
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+
+        .list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .list-item {
+            display: grid;
+            gap: 8px;
+        }
+
+        .card {
+            width: 100%;
+            border-radius: 16px;
+            padding: 11px 12px;
+            text-align: left;
+            cursor: pointer;
+            transition: transform 0.15s ease, border-color 0.15s ease;
+        }
+
+        .card:hover,
+        .card.active {
+            transform: translateY(-1px);
+            border-color: rgba(15, 118, 110, 0.4);
+        }
+
+        .details-inline {
+            overflow: hidden;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid rgba(15, 118, 110, 0.18);
+            box-shadow: var(--shadow);
+            transform-origin: top center;
+            animation: details-slide-down 0.24s ease;
+        }
+
+        .details-inline.closing {
+            animation: details-slide-up 0.2s ease forwards;
+        }
+
+        .details-inline-body {
+            display: grid;
+            gap: 12px;
+            padding: 14px;
+        }
+
+        .details-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 14px 14px 0;
+        }
+
+        .close-button {
+            border: 0;
+            border-radius: 999px;
+            padding: 8px 12px;
+            background: #e2e8f0;
+            color: var(--ink);
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .close-button:hover {
+            background: #cbd5e1;
+        }
+
+        .card-head,
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        #detail-title {
+            min-width: 0;
+            flex: 1;
+            line-height: 1.25;
+        }
+
+        .badge {
+            padding: 3px 7px;
+            border-radius: 999px;
+            color: #fff;
+            font-size: 11px;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            color: #fff;
+        }
+
+        .meta {
+            display: grid;
+            gap: 3px;
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .timeline {
+            display: grid;
+            gap: 8px;
+            max-height: 180px;
+        }
+
+        .timeline-entry {
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: #f8fafc;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            font-size: 13px;
+        }
+
+        .timeline-entry strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        @keyframes details-slide-down {
+            from {
+                opacity: 0;
+                transform: translateY(-10px) scaleY(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scaleY(1);
+            }
+        }
+
+        @keyframes details-slide-up {
+            from {
+                opacity: 1;
+                transform: translateY(0) scaleY(1);
+            }
+            to {
+                opacity: 0;
+                transform: translateY(-8px) scaleY(0.96);
+            }
+        }
+
+        #map {
+            width: 100%;
+            height: 100vh;
+        }
+
+        @media (max-width: 980px) {
+            html,
+            body {
+                height: auto;
+                overflow: auto;
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 65vh;
+            }
+
+            aside {
+                height: auto;
+                display: flex;
+                flex-direction: column;
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .list {
+                max-height: 42vh;
+            }
+
+            #map {
+                height: 65vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <aside>
+        <div>
+            <h1>Карта посылок</h1>
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <strong id="total-count"></strong>
+                <span>Всего создано</span>
+            </div>
+            <div class="stat">
+                <strong id="transit-count"></strong>
+                <span>В пути</span>
+            </div>
+            <div class="stat">
+                <strong id="delivered-count"></strong>
+                <span>Доставлено</span>
+            </div>
+            <div class="stat">
+                <strong id="failed-count"></strong>
+                <span>Сорвано</span>
+            </div>
+            <div class="stat">
+                <strong id="events-count"></strong>
+                <span>События</span>
+            </div>
+            <div class="stat">
+                <strong id="total-money"></strong>
+                <span>Общая стоимость</span>
+            </div>
+        </div>
+
+        <div class="legend">
+            <span class="chip"><span class="dot" style="background: var(--normal);"></span>Стандарт</span>
+            <span class="chip"><span class="dot" style="background: var(--urgent);"></span>Экспресс</span>
+            <span class="chip"><span class="dot" style="background: var(--warn);"></span>Задержка</span>
+            <span class="chip"><span class="dot" style="background: var(--danger);"></span>Срыв доставки</span>
+        </div>
+
+        <div class="sidebar-main">
+            <div class="controls">
+                <select id="package-select">
+                    <option value="">Выбери посылку</option>
+                </select>
+            </div>
+
+            <div id="package-list" class="list"></div>
+        </div>
+    </aside>
+
+    <div id="map"></div>
+
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""
+    ></script>
+    <script>
+        let payload = __PAYLOAD_JSON__;
+        let packages = [];
+        let selectedPackageId = null;
+        let refreshTimer = null;
+        let refreshInFlight = false;
+        let refreshFailures = 0;
+
+        const REFRESH_INTERVAL_MS = 1000;
+        const MAX_REFRESH_FAILURES = 5;
+
+        const map = L.map('map', { zoomControl: true }).setView([payload.map_center.lat, payload.map_center.lon], 4);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        const markersLayer = L.layerGroup().addTo(map);
+        const routeMarkersLayer = L.layerGroup().addTo(map);
+        let markerMap = new Map();
+        let activeRoute = null;
+
+        function priorityColor(pkg) {
+            return pkg.priority === 1 ? '#d97706' : '#2563eb';
+        }
+
+        function statusMeta(status) {
+            const mapByStatus = {
+                queued: { label: 'Ожидает', color: '#64748b' },
+                in_transit: { label: 'В пути', color: '#0f766e' },
+                delayed: { label: 'Задержана', color: '#b45309' },
+                delivered: { label: 'Доставлена', color: '#15803d' },
+                lost: { label: 'Потеряна', color: '#dc2626' },
+                stolen: { label: 'Украдена', color: '#991b1b' },
+                destroyed: { label: 'Разрушена', color: '#7f1d1d' },
+                geocode_failed: { label: 'Ошибка', color: '#475569' },
+            };
+            return mapByStatus[status] || { label: status, color: '#475569' };
+        }
+
+        function markerColor(pkg) {
+            const meta = statusMeta(pkg.status);
+            if (pkg.status === 'queued') {
+                return priorityColor(pkg);
+            }
+            return meta.color;
+        }
+
+        function formatMaybeNumber(value, suffix = '') {
+            return value === null || value === undefined ? '—' : `${value}${suffix}`;
+        }
+
+        function popupHtml(pkg) {
+            const status = statusMeta(pkg.status);
+            const lastTimeline = pkg.timeline && pkg.timeline.length > 0 ? pkg.timeline[pkg.timeline.length - 1] : null;
+
+            return `
+                <strong>ID ${pkg.id}</strong><br>
+                ${pkg.origin}, ${pkg.origin_country} -> ${pkg.destination}, ${pkg.country}<br>
+                Статус: ${status.label}<br>
+                Прогресс: ${pkg.progress_pct.toFixed(1)}%<br>
+                Целостность: ${pkg.integrity_pct}%<br>
+                Событий: ${pkg.events.length}<br>
+                Стоимость: ${pkg.cost === null ? '—' : pkg.cost.toFixed(2)}<br>
+                ${lastTimeline ? `Последнее: ${lastTimeline.time} ${lastTimeline.message}` : ''}
+            `;
+        }
+
+        const select = document.getElementById('package-select');
+        const list = document.getElementById('package-list');
+        let detailsOpen = false;
+
+        function setDetailsOpen(open) {
+            detailsOpen = open;
+        }
+
+        function updateStats() {
+            document.getElementById('total-count').textContent = payload.stats.total;
+            document.getElementById('transit-count').textContent = payload.stats.in_transit;
+            document.getElementById('delivered-count').textContent = payload.stats.delivered;
+            document.getElementById('failed-count').textContent = payload.stats.failed;
+            document.getElementById('events-count').textContent = payload.stats.events;
+            document.getElementById('total-money').textContent = `${payload.stats.total_cost.toFixed(2)}`;
+        }
+
+        function renderMarkers() {
+            markersLayer.clearLayers();
+            markerMap = new Map();
+
+            packages.forEach(pkg => {
+                const marker = L.circleMarker([pkg.lat, pkg.lon], {
+                    radius: 8,
+                    color: markerColor(pkg),
+                    fillColor: markerColor(pkg),
+                    fillOpacity: 0.85,
+                    weight: 2
+                }).addTo(markersLayer);
+
+                marker.bindPopup(popupHtml(pkg));
+                marker.on('click', () => selectPackage(String(pkg.id), true, true, false));
+                markerMap.set(String(pkg.id), marker);
+            });
+        }
+
+        function packageCardHtml(pkg) {
+            const status = statusMeta(pkg.status);
+            const integrityColor = pkg.integrity_pct >= 70 ? '#15803d' : pkg.integrity_pct >= 40 ? '#b45309' : '#dc2626';
+            const cargoSummary = pkg.cargo?.summary || 'Груз не указан';
+            const cargoBrand = pkg.cargo?.brand || 'Без бренда';
+
+            return `
+                <div class="card-head">
+                    <strong>ID ${pkg.id}</strong>
+                    <span class="badge" style="background:${priorityColor(pkg)}">${pkg.shipment_type}</span>
+                </div>
+                <div class="row" style="margin-top:6px;">
+                    <span class="status" style="background:${status.color}">${status.label}</span>
+                    <span>${pkg.progress_pct.toFixed(0)}%</span>
+                </div>
+                <div class="bar"><span style="width:${pkg.progress_pct}%; background:linear-gradient(90deg, ${status.color}, ${priorityColor(pkg)});"></span></div>
+                <div class="meta">
+                    <span>${pkg.origin} -> ${pkg.destination}</span>
+                    <span>Бренд: ${cargoBrand}</span>
+                    <span>Груз: ${cargoSummary}</span>
+                    <span>Целостность: <strong style="color:${integrityColor}">${pkg.integrity_pct}%</strong></span>
+                    <span>Повреждений: ${pkg.damage_count} | Событий: ${pkg.events.length}</span>
+                    <span>Факт/прогноз: ${formatMaybeNumber(pkg.actual_delivery_hours?.toFixed?.(1) ?? pkg.actual_delivery_hours, ' ч')} / ${formatMaybeNumber(pkg.expected_delivery_hours, ' ч')}</span>
+                </div>
+            `;
+        }
+
+        function detailPanelHtml(pkg) {
+            const status = statusMeta(pkg.status);
+            const cargo = pkg.cargo || {};
+            const entries = (pkg.timeline || []).slice().reverse();
+            const timelineHtml = entries.length > 0
+                ? entries.map(entry => `
+                    <div class="timeline-entry">
+                        <strong>${entry.time}</strong>
+                        <span>${entry.message}</span>
+                    </div>
+                `).join('')
+                : '<div class="timeline-entry">Пока без событий.</div>';
+
+            return `
+                <div class="details-toolbar">
+                    <strong>Инфо и журнал</strong>
+                    <button type="button" class="close-button" data-close-details="${pkg.id}">Закрыть</button>
+                </div>
+                <div class="details-inline-body">
+                    <section class="panel">
+                        <h2>Активная посылка</h2>
+                        <div class="row">
+                            <strong id="detail-title">ID ${pkg.id}: ${pkg.origin} -> ${pkg.destination}</strong>
+                            <span class="status" style="background:${status.color}">${status.label}</span>
+                        </div>
+                        <div class="bar"><span style="width:${pkg.progress_pct}%;"></span></div>
+                        <p>Прогресс ${pkg.progress_pct.toFixed(1)}%, шаг ${pkg.current_step}/${pkg.total_steps || 0}, риск ${Math.round(pkg.event_risk * 100)}%.</p>
+                        <div class="detail-grid">
+                            <div>Тип<strong>${pkg.shipment_type}</strong></div>
+                            <div>Целостность<strong>${pkg.integrity_pct}%</strong></div>
+                            <div>Бренд<strong>${cargo.brand || '—'}</strong></div>
+                            <div>Товар<strong>${cargo.name || '—'}</strong></div>
+                            <div>Модель<strong>${cargo.model || '—'}</strong></div>
+                            <div>Количество<strong>${cargo.quantity ? `${cargo.quantity} ${cargo.unit || ''}` : '—'}</strong></div>
+                            <div>Повреждения<strong>${pkg.damage_count}</strong></div>
+                            <div>События<strong>${pkg.events.length}</strong></div>
+                            <div>Вес<strong>${formatMaybeNumber(pkg.weight, ' кг')}</strong></div>
+                            <div>Прогноз<strong>${formatMaybeNumber(pkg.expected_delivery_hours, ' ч')}</strong></div>
+                            <div>Факт<strong>${formatMaybeNumber(pkg.actual_delivery_hours, ' ч')}</strong></div>
+                            <div>Задержка<strong>${formatMaybeNumber(pkg.delay_hours, ' ч')}</strong></div>
+                            <div>Отклонение<strong>${formatMaybeNumber(pkg.completion_delta_hours, ' ч')}</strong></div>
+                            <div>Стоимость<strong>${formatMaybeNumber(pkg.cost?.toFixed?.(2) ?? pkg.cost)}</strong></div>
+                            <div>Последнее событие<strong>${pkg.last_event || '—'}</strong></div>
+                        </div>
+        
+                    </section>
+                    <section class="panel">
+                        <h2>Журнал</h2>
+                        <div class="timeline">${timelineHtml}</div>
+                    </section>
+                </div>
+            `;
+        }
+
+        function scrollCardIntoView(id) {
+            const card = list.querySelector(`.card[data-id="${id}"]`);
+            if (!card) {
+                return;
+            }
+
+            card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        function animateCloseInlineDetails(id) {
+            const detailsNode = list.querySelector(`.details-inline[data-id="${id}"]`);
+            if (!detailsNode) {
+                renderList();
+                return;
+            }
+
+            detailsNode.classList.add('closing');
+            window.setTimeout(() => {
+                renderList();
+            }, 200);
+        }
+
+        function renderList() {
+            select.innerHTML = '<option value="">Выбери посылку</option>';
+            list.innerHTML = '';
+
+            packages.forEach(pkg => {
+                const option = document.createElement('option');
+                option.value = String(pkg.id);
+                option.textContent = `ID ${pkg.id} - ${pkg.destination} (${statusMeta(pkg.status).label})`;
+                select.appendChild(option);
+
+                const item = document.createElement('div');
+                item.className = 'list-item';
+
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'card';
+                card.dataset.id = String(pkg.id);
+                card.classList.toggle('active', selectedPackageId === String(pkg.id));
+                card.innerHTML = packageCardHtml(pkg);
+                card.addEventListener('click', () => selectPackage(String(pkg.id), true, true, false));
+                item.appendChild(card);
+
+                if (detailsOpen && selectedPackageId === String(pkg.id)) {
+                    const details = document.createElement('div');
+                    details.className = 'details-inline';
+                    details.dataset.id = String(pkg.id);
+                    details.innerHTML = detailPanelHtml(pkg);
+                    const closeButton = details.querySelector('[data-close-details]');
+                    closeButton.addEventListener('click', event => {
+                        event.stopPropagation();
+                        detailsOpen = false;
+                        animateCloseInlineDetails(String(pkg.id));
+                    });
+                    item.appendChild(details);
+                }
+
+                list.appendChild(item);
+            });
+        }
+
+        function drawRoute(pkg, fitView) {
+            if (activeRoute) {
+                map.removeLayer(activeRoute);
+                activeRoute = null;
+            }
+
+            routeMarkersLayer.clearLayers();
+
+            if (!pkg.route || pkg.route.length === 0) {
+                return;
+            }
+
+            L.marker([pkg.start_lat, pkg.start_lon]).addTo(routeMarkersLayer)
+                .bindPopup(`<strong>Отправление</strong><br>${pkg.origin}, ${pkg.origin_country}`);
+
+            L.marker([pkg.end_lat, pkg.end_lon]).addTo(routeMarkersLayer)
+                .bindPopup(`<strong>Пункт назначения</strong><br>${pkg.destination}, ${pkg.country}`);
+
+            activeRoute = L.polyline(pkg.route, {
+                color: priorityColor(pkg),
+                weight: 4,
+                opacity: 0.82,
+                dashArray: pkg.route_is_fallback ? '10 10' : null,
+            }).addTo(map);
+
+            if (fitView) {
+                map.fitBounds(activeRoute.getBounds(), { padding: [40, 40] });
+            }
+        }
+
+        function selectPackage(id, fitView = false, openDetails = true, scrollToCard = false) {
+            selectedPackageId = id || null;
+            select.value = id;
+
+            Array.from(document.querySelectorAll('.card')).forEach(card => {
+                card.classList.toggle('active', card.dataset.id === id);
+            });
+
+            const pkg = packages.find(item => String(item.id) === id);
+            if (!pkg) {
+                if (activeRoute) {
+                    map.removeLayer(activeRoute);
+                    activeRoute = null;
+                }
+                routeMarkersLayer.clearLayers();
+                setDetailsOpen(false);
+                renderList();
+                return;
+            }
+
+            drawRoute(pkg, fitView);
+            setDetailsOpen(openDetails);
+            renderList();
+
+            if (scrollToCard) {
+                window.requestAnimationFrame(() => {
+                    scrollCardIntoView(id);
+                });
+            }
+
+            const marker = markerMap.get(id);
+            if (marker) {
+                marker.openPopup();
+            }
+        }
+
+        function stopRefreshLoop() {
+            if (refreshTimer !== null) {
+                clearTimeout(refreshTimer);
+                refreshTimer = null;
+            }
+        }
+
+        function scheduleRefresh(delay = REFRESH_INTERVAL_MS) {
+            stopRefreshLoop();
+
+            if (!payload.simulation_active) {
+                return;
+            }
+
+            refreshTimer = window.setTimeout(() => {
+                refreshTimer = null;
+                refreshPayload();
+            }, delay);
+        }
+
+        select.addEventListener('change', event => {
+            selectPackage(event.target.value, true, true, true);
+        });
+
+        function applyPayload(nextPayload) {
+            payload = nextPayload;
+            packages = payload.packages.filter(item => item.lat !== null && item.lon !== null);
+
+            updateStats();
+            renderMarkers();
+            renderList();
+
+            if (selectedPackageId && packages.some(item => String(item.id) === selectedPackageId)) {
+                selectPackage(selectedPackageId, false, detailsOpen, false);
+                return;
+            }
+
+            selectPackage('', false, false, false);
+        }
+
+        async function refreshPayload() {
+            if (refreshInFlight || !payload.simulation_active) {
+                return;
+            }
+
+            refreshInFlight = true;
+
+            try {
+                const response = await fetch(`shipments_data_09.json?ts=${Date.now()}`, { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const nextPayload = await response.json();
+                refreshFailures = 0;
+                applyPayload(nextPayload);
+
+                if (payload.simulation_active) {
+                    scheduleRefresh();
+                } else {
+                    stopRefreshLoop();
+                }
+            } catch (err) {
+                refreshFailures += 1;
+                console.debug('Map refresh skipped', err);
+
+                if (payload.simulation_active && refreshFailures < MAX_REFRESH_FAILURES) {
+                    scheduleRefresh(REFRESH_INTERVAL_MS * Math.min(refreshFailures + 1, 4));
+                } else {
+                    stopRefreshLoop();
+                }
+            } finally {
+                refreshInFlight = false;
+            }
+        }
+
+        applyPayload(payload);
+
+        if (payload.simulation_active) {
+            scheduleRefresh(0);
+        }
+    </script>
+</body>
+</html>
