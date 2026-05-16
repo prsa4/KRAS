@@ -371,9 +371,9 @@ def split_route_into_steps(route_points, target_step_km):
 
     total_distance = 0.0
 
-    for index in range(1, len(route_points)):
-        start_lat, start_lon = route_points[index - 1]
-        end_lat, end_lon = route_points[index]
+    for i in range(1, len(route_points)):
+        start_lat, start_lon = route_points[i - 1]
+        end_lat, end_lon = route_points[i]
         total_distance += calculate_distance(start_lat, start_lon, end_lat, end_lon)
 
     effective_step_km = max(target_step_km, total_distance / MAX_ROUTE_STEPS)
@@ -381,11 +381,11 @@ def split_route_into_steps(route_points, target_step_km):
     distance_since_checkpoint = 0.0
     checkpoint_origin = list(route_points[0])
 
-    for index in range(1, len(route_points)):
+    for i in range(1, len(route_points)):
         segment_start = (
-            checkpoint_origin if distance_since_checkpoint > 0 else list(route_points[index - 1])
+            checkpoint_origin if distance_since_checkpoint > 0 else list(route_points[i - 1])
         )
-        segment_end = list(route_points[index])
+        segment_end = list(route_points[i])
 
         while True:
             segment_distance = calculate_distance(
@@ -1282,12 +1282,12 @@ def run(settings=None):
     rng = random
     timestamp_supplier = current_time_text
 
-    info("Прогрев генератора товаров | ожидание первого готового товара")
+    info("Генерация товаров")
     prefill_cargo_buffer(target_size=1, rng=rng, max_rounds=1)
     info(f"Стартовый буфер товаров | элементов={get_cargo_buffer_size()}")
 
     info(
-        "Старт симуляции 0.9 | "
+        "Старт симуляции v0.9 | "
         f"время={settings['sim_time']} сек | воркеры={settings['workers_n']} | "
         f"задержка генерации={settings['delay']:.2f} сек"
     )
